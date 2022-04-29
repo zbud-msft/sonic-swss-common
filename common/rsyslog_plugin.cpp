@@ -21,7 +21,6 @@ string pgmName = "";
 unordered_set<string> errReportedTags;
 
 void loadRegexlist(string rcPath, string pgmName) {
-	// SWSS_LOG_ENTER();
 	fstream rcfile;
 	parserCfgFile = regex_replace(parserCfgFile, regex("\\{}"), pgmName);
 	parserCfgFile = rcPath + parserCfgFile;
@@ -31,11 +30,9 @@ void loadRegexlist(string rcPath, string pgmName) {
 		return;
 	}
 	rcfile >> regexList;
-	// SWSS_LOG_INFO("loardRegexList: file: %s len=%d", parserCfgFile, regexList.size());
 }
 
 tuple<bool, json> matchRegex(string msg) {
-	// SWSS_LOG_ENTER();
 	bool isMatch = false;
 	json structuredEvent;
 	for (int i = 0; i < regexList.size(); i++) {
@@ -54,7 +51,6 @@ tuple<bool, json> matchRegex(string msg) {
 		structuredEvent["program"] = pgmName;
 		if(params.size() != groups.size() && errReportedTags.find(tag) == errReportedTags.end()) {
 			errReportedTags.insert(tag);
-			// SWSS_LOG_ERROR("%s: params mismatched, params length: %d group length: %d for message:%s", pgmName, params.size(), groups.size(), msg);
 			structuredEvent["parsed"] = groups;
 		} else {
 			for(int j = 0; j < params.size(); j++) {
@@ -68,9 +64,6 @@ tuple<bool, json> matchRegex(string msg) {
 }
 
 void onInit(bool isDebug, string rcPath, string pgmName) {
-	//swss::Logger::getInstance().setMinPrio(swss::Logger::SWSS_NOTICE);
-	//SWSS_LOG_ENTER();
-	// SWSS_LOG_DEBUG("onInit called");
 	loadRegexlist(rcPath, pgmName);
 	if (isDebug) {
 		logfile = regex_replace(logfile, regex("\\{}"), pgmName);
@@ -79,7 +72,6 @@ void onInit(bool isDebug, string rcPath, string pgmName) {
 }
 
 void onMessage(string msg) {
-	// SWSS_LOG_ENTER();
 	tuple<bool, json> regexMatch = matchRegex(msg);
 	bool match = get<0>(regexMatch);
 	json event = get<1>(regexMatch);
@@ -94,17 +86,12 @@ void onMessage(string msg) {
 }
 
 void onExit() {
-	// SWSS_LOG_ENTER();
-	// SWSS_LOG_DEBUG("onExit called");
 	if(outfile) {
 		outfile.close();
 	}
 }
 
 void run() {
-	// SWSS_LOG_ENTER();
-	cout << "OK" << endl;
-	
 	while(true) {
 		string line;
 		getline(cin, line);
@@ -127,7 +114,6 @@ void showUsage(string name) {
 }
 
 int main(int argc, char** argv) {
-	// SWSS_LOG_ENTER();
 	json j;
 
 	if (argc < 2) { // required param is not provided
