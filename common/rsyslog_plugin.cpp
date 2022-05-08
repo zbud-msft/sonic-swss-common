@@ -13,71 +13,76 @@
 using namespace std;
 using namespace nlohmann;
 
-string parserCfgFile = "{}_parse.rc.json";
-ofstream outfile;
-string logfile = "/tmp/{}_logfile";
-json regexList = json::array();
-string pgmName = "";
-unordered_set<string> errReportedTags;
+string LOG_FILE_NAME = "/tmp/{}_logfile";
+ofstream g_outfile;
+json g_regexList = json::array();
+vector<regex> g_expressions;
+unordered_set<string> g_errReportedTags;
 
-void loadRegexlist(string rcPath, string pgmName) {
-	fstream rcfile;
-	parserCfgFile = regex_replace(parserCfgFile, regex("\\{}"), pgmName);
-	parserCfgFile = rcPath + parserCfgFile;
-	rcfile.open(parserCfgFile, ios::in);
-	if (!rcfile) {
-		cerr << "No such file: " << parserCfgFile << endl;
-		return;
-	}
-	rcfile >> regexList;
-}
-
-tuple<bool, json> matchRegex(string msg) {
-	bool isMatch = false;
-	json structuredEvent;
-	for (int i = 0; i < regexList.size(); i++) {
+void createRegexList(json regexList) {
+	for(int i = 0; i < regexList.size(); i++) {
 		string regexString = regexList[i]["regex"];
 		regex expression(regexString);
+		g_expressions.push_back(expression);
+	}
+}
+
+void loadRegexlist(string rcPath) {
+	fstream rcfile;
+	rcfile.open(rcPath, ios::in);
+	if (!rcfile) {
+		cerr << "No such file: " << rcPath << endl;
+		return;
+	}
+	rcfile >> g_regexList;
+	createRegexList(g_regexList);
+}
+
+tuple<bool, json> matchRegex(string msg, string pgmName) {
+	bool isMatch = false;
+	json structuredEvent;
+
+	for (int i = 0; i < g_regexList.size(); i++) {
 		match_results<string::const_iterator> matchResults;
-		regex_search(msg, matchResults, expression);
+		regex_search(msg, matchResults, g_expressions[i]);
 		vector<string> groups;
 		// first match in groups is entire msg string
 		for(int j = 1; j < matchResults.size(); j++) {
 			groups.push_back(matchResults.str(i));
 		}
-		vector<string> params = regexList[i]["params"];
-		string tag = regexList[i]["tag"];
+		vector<string> params = g_regexList[i]["params"];
+		string tag = g_regexList[i]["tag"];
 		structuredEvent["tag"] = tag;
 		structuredEvent["program"] = pgmName;
-		if(params.size() != groups.size() && errReportedTags.find(tag) == errReportedTags.end()) {
-			errReportedTags.insert(tag);
+		if(params.size() != groups.size() && g_errReportedTags.find(tag) == g_errReportedTags.end()) {
+			g_errReportedTags.insert(tag);
 			structuredEvent["parsed"] = groups;
 		} else {
 			for(int j = 0; j < params.size(); j++) {
-				structuredEvent[params[j]] = "groups[j]";
+				structuredEvent[params[j]] = groups[j];
 			}
 			isMatch = true;
-			break;
+			break; // found matching event regex
 		}
 	}
 	return make_tuple(isMatch, structuredEvent);
 }
 
 void onInit(bool isDebug, string rcPath, string pgmName) {
-	loadRegexlist(rcPath, pgmName);
+	loadRegexlist(rcPath);
 	if (isDebug) {
-		logfile = regex_replace(logfile, regex("\\{}"), pgmName);
-		outfile.open(logfile);
+		auto logfile = regex_replace(LOG_FILE_NAME, regex("\\{}"), pgmName);
+		g_outfile.open(LOG_FILE_NAME);
 	}
 }
 
-void onMessage(string msg) {
-	tuple<bool, json> regexMatch = matchRegex(msg);
+void onMessage(string msg, string pgmName) {
+	tuple<bool, json> regexMatch = matchRegex(msg, pgmName);
 	bool match = get<0>(regexMatch);
 	json event = get<1>(regexMatch);
 
-	if(outfile) {
-		outfile << "match: " << match << "\noriginal message: " << msg << "\nstructured event: " << event << endl;
+	if(g_outfile) {
+		g_outfile << "match: " << match << "\noriginal message: " << msg << "\nstructured event: " << event << endl;
 	}
 
 	if(match) {
@@ -86,19 +91,19 @@ void onMessage(string msg) {
 }
 
 void onExit() {
-	if(outfile) {
-		outfile.close();
+	if(g_outfile) {
+		g_outfile.close();
 	}
 }
 
-void run() {
+void run(string pgmName) {
 	while(true) {
 		string line;
 		getline(cin, line);
 		if(line.empty()) {
 			continue;
 		}
-		onMessage(line);
+		onMessage(line, pgmName);
 		cout << "Called onMessage on: " << line << endl;
 	}
 }
@@ -108,8 +113,8 @@ void showUsage(string name) {
 		<< "Options:\n"
 		<< "\t-h,--help\t\tShow this help message\n"
 		<< "\t-d,--debug,type=bool\t\tRun with debug log level"
-		<< "\t-p,--pgm-name,type=string,required=True\t\tName of the program dumping the message"
-		<< "\t-r,--rc-path\t\tDirectory of the rc file"
+		<< "\t-r,--rc-path,required,type=string\t\tPath to rc file"
+		<< "\t-p,--pgmName,required,type=string\t\tSource of program generating syslog message"
 		<< endl;
 }
 
@@ -122,8 +127,8 @@ int main(int argc, char** argv) {
 	}
 
 	bool isDebug = false;
-	string programName = "";
-	string rcPath = "/etc/rsyslog.d/";
+	string rcPath;
+	string pgmName;
 
 	for(int i = 1; i < argc; i++) {
 		string arg = argv[i];
@@ -144,18 +149,21 @@ int main(int argc, char** argv) {
 				return 1;
 			}
 			isDebug = (debugFlag == "true") ? true : false;
-		} else if (arg == "-p" || arg == "--pgm-name") {
-			programName = argv[++i];
 		} else if (arg == "-r" || arg == "--rc-path") {
 			rcPath = argv[++i];
+		} else if (arg == "p" || arg == "--pgmName") {
+			pgmName = argv[++i];	
 		} else { // invalid flag
 			showUsage(argv[0]);
 			return 1;
 		}
 	}
-	pgmName = programName;
-	onInit(isDebug, rcPath, programName);
-	run();
+	if(rcPath.empty() || pgmName.empty()) { // Missing required rc path
+		showUsage(argv[0]);
+		return 1;
+	}
+	onInit(isDebug, rcPath, pgmName);
+	run(pgmName);
 
 	return 0;
 }
